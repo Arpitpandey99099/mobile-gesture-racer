@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pro Gesture Racer Mobile</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a1a1a; color: white; font-family: 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; touch-action: none;}
+        #gameCanvas { background-color: #333; border: 4px solid #444; border-radius: 10px; }
+        .input_video { display: none; }
+        #loading { position: absolute; font-size: 20px; text-align: center; z-index: 10; background: rgba(0,0,0,0.9); width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center;}
+        .ui-overlay { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 2px 2px black;}
+    </style>
+</head>
+<body>
+
+    <div id="loading">
+        <div style="font-size: 40px;">🏎️</div>
+        Loading AI Engine...<br>Please allow camera!
+    </div>
+    
+    <div class="ui-overlay">
+        <div id="scoreLabel" style="font-size: 24px; font-weight: bold;">Score: 0</div>
+        <div id="modeLabel" style="color: #00c8ff;">MODE: CRUISING</div>
+    </div>
+
+    <video class="input_video" autoplay playsinline></video>
+    <canvas id="gameCanvas" width="360" height="640"></canvas>
+
+    <script>
+        const videoElement = document.getElementsByClassName('input_video')[0];
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const loadingScreen = document.getElementById('loading');
+        const scoreLabel = document.getElementById('scoreLabel');
+        const modeLabel = document.getElementById('modeLabel');
+
+        let playerX = canvas.width / 2;
+        let playerY = canvas.height - 120;
+        let enemies = [];
+        let score = 0;
+        let gameSpeed = 6;
+        let gameOver = false;
+        let isBoosting = false;
+
+        // --- 1. GESTURE LOGIC ---
+        function countFingers(landmarks) {
+            const tips = [8, 12, 16, 20];
+            let count = 0;
+            tips.forEach(tip => {
+                if (landmarks[tip].y < landmarks[tip - 2].y) count++;
+            });
+            return count;
+        }
+
+        // --- 2. GAME ENGINE ---
+        function resetGame() {
+            enemies = [];
+            score = 0;
+            gameSpeed = 6;
+            gameOver = false;
+            drawGame();
+        }
+
+        canvas.addEventListener('click', () => { if(gameOver) resetGame(); });
+        canvas.addEventListener('touchstart', () => { if(gameOver) resetGame(); });
+
+        function spawnEnemy() {
+            if(!gameOver && Math.random() < 0.03) {
+                enemies.push({ x: Math.random() * (canvas.width - 45), y: -80, w: 45, h: 80 });
+            }
+        }
+
+        function drawGame() {
+            ctx.fillStyle = '#222';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Road Lines
+            ctx.strokeStyle = '#444';
+            ctx.setLineDash([20, 20]);
+            ctx.beginPath(); ctx.moveTo(canvas.width/2, 0); ctx.lineTo(canvas.width/2, canvas.height); ctx.stroke();
+
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = 'white';
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 35px Arial';
+                ctx.fillText('CRASHED!', canvas.width/2, canvas.height/2 - 20);
+                ctx.font = '20px Arial';
+                ctx.fillText('Tap Screen to Restart', canvas.width/2, canvas.height/2 + 30);
+                return;
+            }
+
+            // Player Car
+            ctx.fillStyle = isBoosting ? '#FFD700' : '#00c8ff';
+            ctx.fillRect(playerX - 22, playerY, 45, 80);
+            ctx.fillStyle = '#111'; // Cockpit
+            ctx.fillRect(playerX - 12, playerY + 15, 25, 25);
+
+            // Enemies
+            ctx.fillStyle = '#ff3232';
+            for (let i = 0; i < enemies.length; i++) {
+                let e = enemies[i];
+                e.y += gameSpeed;
+                ctx.fillRect(e.x, e.y, e.w, e.h);
+
+                if (Math.abs(playerX - (e.x + e.w/2)) < 35 && Math.abs(playerY - e.y) < 70) {
+                    gameOver = true;
+                }
+
+                if (e.y > canvas.height) {
+                    enemies.splice(i, 1);
+                    score += isBoosting ? 2 : 1;
+                    scoreLabel.innerText = "Score: " + score;
+                    i--;
+                }
+            }
+
+            spawnEnemy();
+            requestAnimationFrame(drawGame);
+        }
+
+        // --- 3. AI HAND TRACKING ---
+        function onResults(results) {
+            loadingScreen.style.display = 'none';
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                let hand = results.multiHandLandmarks[0];
+                
+                // Mirror X for intuitive steering
+                let rawX = 1 - hand[8].x;
+                playerX += ((rawX * canvas.width) - playerX) * 0.2;
+
+                // Speed Gestures
+                let fCount = countFingers(hand);
+                if (fCount >= 4) {
+                    gameSpeed = 15; isBoosting = true;
+                    modeLabel.innerText = "MODE: NITRO BOOST!!"; modeLabel.style.color = "#FFD700";
+                } else if (fCount === 0) {
+                    gameSpeed = 3; isBoosting = false;
+                    modeLabel.innerText = "MODE: BRAKING..."; modeLabel.style.color = "#ff3232";
+                } else {
+                    gameSpeed = 7; isBoosting = false;
+                    modeLabel.innerText = "MODE: CRUISING"; modeLabel.style.color = "#00c8ff";
+                }
+            }
+        }
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 360, height: 640, facingMode: 'user'
+        });
+        
+        camera.start();
+        drawGame();
+    </script>
+</body>
+</html>
